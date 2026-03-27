@@ -1,6 +1,7 @@
 #!/bin/sh
 
-TOOLCHAIN=aarch64-linux-gnu-
+TOOLCHAIN_ARM=arm-linux-gnueabi-
+TOOLCHAIN_AARCH64=aarch64-linux-gnu-
 
 ATFCFG_DIR="${ATFCFG_DIR:-mt798x_atf}"
 CFG_SUBDIR="${CFG_SUBDIR:-}"
@@ -34,10 +35,6 @@ if [ ! -d "$ATF_DIR" ]; then
     echo "Error: ATF_DIR '$ATF_DIR' not found."
     exit 1
 fi
-
-command -v "${TOOLCHAIN}gcc" >/dev/null 2>&1
-[ "$?" != "0" ] && { echo "${TOOLCHAIN}gcc not found!"; exit 1; }
-export CROSS_COMPILE="$TOOLCHAIN"
 
 if [ -e "$ATF_DIR/makefile" ]; then
     ATF_MKFILE="makefile"
@@ -91,6 +88,20 @@ for cfg_file in $CONFIG_LIST; do
     #   mt7981-ddr3-bga-ram.config  -> soc=mt7981
     #   atf-mt7986-ddr4-ram.config  -> soc=mt7986
     soc=$(echo "$cfg_base" | sed -e 's/^atf-//' | cut -d'-' -f1)
+
+    if [ -z "$TOOLCHAIN" ]; then
+        if [ "$soc" = "mt7629" ]; then
+            TOOLCHAIN=$TOOLCHAIN_ARM
+        else
+            TOOLCHAIN=$TOOLCHAIN_AARCH64
+        fi
+        echo "Using toolchain $TOOLCHAIN for SOC $soc"
+    fi
+
+    command -v "${TOOLCHAIN}gcc" >/dev/null 2>&1
+    [ "$?" != "0" ] && { echo "${TOOLCHAIN}gcc not found!"; exit 1; }
+    export CROSS_COMPILE="$TOOLCHAIN"
+
     echo "======================================================================"
     echo "Configration overview:"
     echo "======================================================================"
