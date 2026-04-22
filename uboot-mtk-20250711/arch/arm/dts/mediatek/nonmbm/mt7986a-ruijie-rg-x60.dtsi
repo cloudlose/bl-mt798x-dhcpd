@@ -17,10 +17,6 @@
 		bootcmd = "mtkboardboot";
 		blink_led = "red:status";
 		system_led = "green:status";
-
-		environment {
-			bootconf = "config@ruijie_x60_gsw_en8811h_phy";
-		};
 	};
 
 	memory@40000000 {
@@ -33,13 +29,13 @@
 			label = "default";
 			cmdline = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000";
 			mtdids = "spi-nand0=spi-nand0";
-			mtdparts = "spi-nand0:1024k(bl2),512k(u-boot-env),2048k(Factory),2048k(fip),512k(product_info),512k(kdump),64512k(ubi)";
+			mtdparts = "spi-nand0:1024k(bl2),512k(u-boot-env),2048k(Factory),2048k(fip),512k(product_info),512k(kdump),109568k(ubi)";
 		};
 
 		layout@1 {
-			label = "ubi-107m";
+			label = "stock";
 			mtdids = "spi-nand0=spi-nand0";
-			mtdparts = "spi-nand0:1024k(bl2),512k(u-boot-env),2048k(Factory),2048k(fip),512k(product_info),512k(kdump),109568k(ubi)";
+			mtdparts = "spi-nand0:1024k(bl2),512k(u-boot-env),2048k(Factory),2048k(fip),512k(product_info),512k(kdump),64512k(ubi)";
 		};
 	};
 
