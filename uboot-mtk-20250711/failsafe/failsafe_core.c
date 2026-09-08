@@ -31,6 +31,7 @@
 #include <net/mtk_telnetd.h>
 #endif
 #include <linux/string.h>
+#include <linux/delay.h>
 #include <rand.h>
 #include <u-boot/schedule.h>
 #include <vsprintf.h>
@@ -163,6 +164,8 @@ int start_web_failsafe(void)
 	mtk_tcp_done_flag = false;
 	eth_needs_reinit = false;
 	services_auto_started = false;
+	auto_action_pending = false;
+	reboot_pending = false;
 
 	/*
 	 * Initialize network subsystem.  net_init() is safe to call
@@ -171,31 +174,70 @@ int start_web_failsafe(void)
 	int net_ret = net_init();
 	printf("[FAILSAFE] net_init() returned %d\n", net_ret);
 	if (eth_is_on_demand_init()) {
-		eth_halt();
 		eth_set_current();
-		if (eth_init() < 0) {
-			printf("Error: failed to initialize ethernet\n");
-			failsafe_httpd_running = false;
-			return -1;
+		if (!eth_is_active(eth_get_dev())) {
+			if (eth_init() < 0) {
+				eth_halt();
+				mdelay(300);
+				if (eth_init() < 0) {
+					printf("Error: failed to initialize ethernet\n");
+					failsafe_httpd_running = false;
+					return -1;
+				}
+			}
 		}
 	} else {
 		eth_init_state_only();
 	}
 	printf("[FAILSAFE] eth initialized\n");
 
-	/* Reset the MTK TCP subsystem */
-	mtk_tcp_start();
-	printf("[FAILSAFE] mtk_tcp_start() done\n");
+	/*
+	 * This session owns the network now, so take the whole L3
+	 * configuration back from whatever ran before it.  The netabort
+	 * listener (which initializes the network before autoboot), a
+	 * dhcp/tftp executed by the boot command, or the DHCP server that
+	 * main_loop() auto-started may all have left net_ip/net_netmask
+	 * pointing at a different subnet -- a board that picked up a LAN
+	 * address during boot would then answer ARP for the wrong network
+	 * and offer leases from a pool that does not match its own IP, so
+	 * a directly connected PC could neither obtain an address nor
+	 * reach the web UI.
+	 */
+	{
+		const char *env_ip = env_get("ipaddr");
+		const char *env_nm = env_get("netmask");
 
+		net_ip = string_to_ip((env_ip && env_ip[0]) ?
+				      env_ip : CONFIG_IPADDR);
+		net_netmask = string_to_ip((env_nm && env_nm[0]) ?
+					    env_nm : CONFIG_NETMASK);
+		net_gateway = net_ip;
+		net_dns_server = net_ip;
+	}
+
+	/*
+	 * (Re)start the servers under this session's configuration.
+	 *
+	 * main_loop() may already have started the DHCP server behind our
+	 * back.  Restarting it here guarantees the UDP handler is
+	 * installed with this session as its owner and the lease table is
+	 * fresh; mtk_dhcpd_start()/mtk_dnsd_start() skip all of that when
+	 * they believe the server is already running.
+	 */
 #ifdef CONFIG_MTK_DHCPD
-	/* Start the DHCP server (net_init may have cleared UDP handlers) */
+	mtk_dhcpd_stop();
 	mtk_dhcpd_start();
 	printf("[FAILSAFE] DHCP server started\n");
 #endif
 #ifdef CONFIG_MTK_DNSD
+	mtk_dnsd_stop();
 	mtk_dnsd_start();
 	printf("[FAILSAFE] DNS server started\n");
 #endif
+
+	/* Reset the MTK TCP subsystem */
+	mtk_tcp_start();
+	printf("[FAILSAFE] mtk_tcp_start() done\n");
 
 	/*
 	 * Non-blocking poll loop.  We call eth_rx() and
@@ -283,8 +325,21 @@ int start_web_failsafe(void)
 			 *
 			 * net_loop() also calls net_clear_handlers() which
 			 * removes the DHCP UDP handler — re-register it.
+			 *
+			 * Re-initialize not only when a network command asked
+			 * for it, but also whenever the interface silently
+			 * dropped out of the ACTIVE state.  eth_rx() does
+			 * nothing on an interface it does not consider
+			 * active -- it simply reports no packets -- so if
+			 * anything else claimed or stopped the device
+			 * behind our back (the netabort listener used to
+			 * keep it started), the web UI, the DHCP server
+			 * and the DNS server would all go deaf without a
+			 * single error message.  Detect that here, at
+			 * poll-loop level, and bring the interface back.
 			 */
-			if (eth_needs_reinit) {
+			if (eth_needs_reinit ||
+			    (eth_get_dev() && !eth_is_active(eth_get_dev()))) {
 				eth_needs_reinit = false;
 				eth_init();
 #ifdef CONFIG_MTK_DHCPD
